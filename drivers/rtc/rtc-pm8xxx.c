@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
- */
+/* Copyright (c) 2010-2011, 2019-2021, The Linux Foundation. All rights reserved. */
+
 #include <linux/of.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -20,6 +20,7 @@
 /* RTC_CTRL register bit fields */
 #define PM8xxx_RTC_ENABLE		BIT(7)
 #define PM8xxx_RTC_ALARM_CLEAR		BIT(0)
+#define PM8xxx_RTC_ALARM_ENABLE	BIT(7)
 
 #define NUM_8_BIT_RTC_REGS		0x4
 
@@ -265,16 +266,20 @@ rtc_rw_fail:
 static int pm8xxx_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alarm)
 {
 	int rc;
+	unsigned int ctrl_reg;
+	unsigned long irq_flags;
 	u8 value[NUM_8_BIT_RTC_REGS];
 	unsigned long secs;
 	struct pm8xxx_rtc *rtc_dd = dev_get_drvdata(dev);
 	const struct pm8xxx_rtc_regs *regs = rtc_dd->regs;
 
+	spin_lock_irqsave(&rtc_dd->ctrl_reg_lock, irq_flags);
+
 	rc = regmap_bulk_read(rtc_dd->regmap, regs->alarm_rw, value,
 			      sizeof(value));
 	if (rc) {
 		dev_err(dev, "RTC alarm time read failed\n");
-		return rc;
+		goto rtc_rw_fail;
 	}
 
 	secs = value[0] | (value[1] << 8) | (value[2] << 16) |
@@ -282,10 +287,34 @@ static int pm8xxx_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alarm)
 
 	rtc_time64_to_tm(secs, &alarm->time);
 
+	rc = regmap_read(rtc_dd->regmap, regs->alarm_ctrl, &ctrl_reg);
+	if (rc) {
+		dev_err(dev, "Read from RTC alarm control register failed\n");
+		goto rtc_rw_fail;
+	}
+
+	if (ctrl_reg && (rtc_tm_to_ktime(alarm->time) >=
+				rtc_dd->rtc->aie_timer.node.expires)) {
+		ctrl_reg &= ~regs->alarm_en;
+		rc = regmap_write(rtc_dd->regmap, regs->alarm_ctrl, ctrl_reg);
+		if (rc) {
+			dev_err(dev, "Update RTC control register failed\n");
+			goto rtc_rw_fail;
+		}
+	}
+
+	alarm->enabled = !!(ctrl_reg & PM8xxx_RTC_ALARM_ENABLE);
+
+	spin_unlock_irqrestore(&rtc_dd->ctrl_reg_lock, irq_flags);
+
 	dev_dbg(dev, "Alarm set for - h:m:s=%ptRt, y-m-d=%ptRdr\n",
 		&alarm->time, &alarm->time);
 
 	return 0;
+
+rtc_rw_fail:
+	spin_unlock_irqrestore(&rtc_dd->ctrl_reg_lock, irq_flags);
+	return rc;
 }
 
 static int pm8xxx_rtc_alarm_irq_enable(struct device *dev, unsigned int enable)
@@ -437,6 +466,26 @@ static const struct pm8xxx_rtc_regs pm8941_regs = {
 	.alarm_en	= BIT(7),
 };
 
+static const struct pm8xxx_rtc_regs pmk8350_regs = {
+	.ctrl		= 0x6146,
+	.write		= 0x6140,
+	.read		= 0x6148,
+	.alarm_rw	= 0x6240,
+	.alarm_ctrl	= 0x6246,
+	.alarm_ctrl2	= 0x6248,
+	.alarm_en	= BIT(7),
+};
+
+static const struct pm8xxx_rtc_regs pm5100_regs = {
+	.ctrl		= 0x6446,
+	.write		= 0x6440,
+	.read		= 0x6448,
+	.alarm_rw	= 0x6540,
+	.alarm_ctrl	= 0x6546,
+	.alarm_ctrl2	= 0x6548,
+	.alarm_en	= BIT(7),
+};
+
 /*
  * Hardcoded RTC bases until IORESOURCE_REG mapping is figured out
  */
@@ -445,6 +494,8 @@ static const struct of_device_id pm8xxx_id_table[] = {
 	{ .compatible = "qcom,pm8018-rtc", .data = &pm8921_regs },
 	{ .compatible = "qcom,pm8058-rtc", .data = &pm8058_regs },
 	{ .compatible = "qcom,pm8941-rtc", .data = &pm8941_regs },
+	{ .compatible = "qcom,pmk8350-rtc", .data = &pmk8350_regs },
+	{ .compatible = "qcom,pm5100-rtc", .data = &pm5100_regs },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, pm8xxx_id_table);

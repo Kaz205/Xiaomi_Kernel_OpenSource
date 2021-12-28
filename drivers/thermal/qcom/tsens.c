@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015, 2021, The Linux Foundation. All rights reserved.
  * Copyright (c) 2019, 2020, Linaro Ltd.
  */
 
@@ -462,7 +462,7 @@ static irqreturn_t tsens_irq_thread(int irq, void *data)
 
 	for (i = 0; i < priv->num_sensors; i++) {
 		bool trigger = false;
-		const struct tsens_sensor *s = &priv->sensor[i];
+		struct tsens_sensor *s = &priv->sensor[i];
 		u32 hw_id = s->hw_id;
 
 		if (IS_ERR(s->tzd))
@@ -507,6 +507,7 @@ static irqreturn_t tsens_irq_thread(int irq, void *data)
 		spin_unlock_irqrestore(&priv->ul_lock, flags);
 
 		if (trigger) {
+			s->cached_temp = temp;
 			dev_dbg(priv->dev, "[%u] %s: TZ update trigger (%d mC)\n",
 				hw_id, __func__, temp);
 			thermal_zone_device_update(s->tzd,
@@ -515,6 +516,7 @@ static irqreturn_t tsens_irq_thread(int irq, void *data)
 			dev_dbg(priv->dev, "[%u] %s: no violation:  %d\n",
 				hw_id, __func__, temp);
 		}
+		s->cached_temp = INT_MIN;
 	}
 
 	return IRQ_HANDLED;
@@ -601,6 +603,10 @@ int get_temp_tsens_valid(const struct tsens_sensor *s, int *temp)
 	/* Valid bit is set, OK to read the temperature */
 	*temp = tsens_hw_to_mC(s, temp_idx);
 
+	if (s->cached_temp != INT_MIN)
+		*temp = s->cached_temp;
+	TSENS_DBG(priv, "Sensor_id: %d temp: %d", hw_id, *temp);
+
 	return 0;
 }
 
@@ -615,6 +621,8 @@ int get_temp_common(const struct tsens_sensor *s, int *temp)
 		return ret;
 
 	*temp = code_to_degc(last_temp, s) * 1000;
+
+	TSENS_DBG(priv, "Sensor_id: %d temp: %d", hw_id, *temp);
 
 	return 0;
 }
@@ -685,6 +693,13 @@ static void tsens_debug_init(struct platform_device *pdev)
 	/* A directory for each instance of the TSENS IP */
 	priv->debug = debugfs_create_dir(dev_name(&pdev->dev), priv->debug_root);
 	debugfs_create_file("sensors", 0444, priv->debug, pdev, &dbg_sensors_fops);
+
+	/* Enable TSENS IPC logging context */
+	priv->ipc_log = ipc_log_context_create(IPC_LOGPAGES,
+				dev_name(&pdev->dev), 0);
+	if (!priv->ipc_log)
+		dev_err(&pdev->dev, "%s: unable to create IPC Logging for %s\n",
+				__func__, dev_name(&pdev->dev));
 }
 #else
 static inline void tsens_debug_init(struct platform_device *pdev) {}
@@ -1035,6 +1050,7 @@ static int tsens_probe(struct platform_device *pdev)
 			priv->sensor[i].hw_id = data->hw_ids[i];
 		else
 			priv->sensor[i].hw_id = i;
+		priv->sensor[i].cached_temp = INT_MIN;
 	}
 	priv->feat = data->feat;
 	priv->fields = data->fields;

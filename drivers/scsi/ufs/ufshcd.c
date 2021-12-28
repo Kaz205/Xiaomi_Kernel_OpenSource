@@ -2,7 +2,7 @@
 /*
  * Universal Flash Storage Host controller driver Core
  * Copyright (C) 2011-2013 Samsung India Software Operations
- * Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2021, The Linux Foundation. All rights reserved.
  *
  * Authors:
  *	Santosh Yaraganavi <santosh.sy@samsung.com>
@@ -7764,6 +7764,11 @@ void ufshcd_parse_dev_ref_clk_freq(struct ufs_hba *hba, struct clk *refclk)
 	unsigned long freq;
 
 	freq = clk_get_rate(refclk);
+	if (freq == 0) {
+		dev_warn(hba->dev, " (%s) clk_get_rate - %ld\n", __func__,
+			freq);
+		freq = clk_round_rate(refclk, 19200000);
+	}
 
 	hba->dev_ref_clk_freq =
 		ufs_get_bref_clk_from_hz(freq);

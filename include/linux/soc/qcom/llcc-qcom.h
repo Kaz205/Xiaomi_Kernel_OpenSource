@@ -1,10 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright (c) 2017-2018, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
  *
  */
 
 #include <linux/platform_device.h>
+#include <linux/types.h>
 #ifndef __LLCC_QCOM__
 #define __LLCC_QCOM__
 
@@ -16,6 +17,7 @@
 #define LLCC_AUDIO       6
 #define LLCC_MDMHPGRW    7
 #define LLCC_MDM         8
+#define LLCC_MDMHW       9
 #define LLCC_CMPT        10
 #define LLCC_GPUHTW      11
 #define LLCC_GPU         12
@@ -26,6 +28,18 @@
 #define LLCC_MDMHPFX     20
 #define LLCC_MDMPNG      21
 #define LLCC_AUDHW       22
+#define LLCC_CVP         28
+#define LLCC_MDMVPE      29
+#define LLCC_APTCM       30
+#define LLCC_WRTCH       31
+#define LLCC_CVPFW       32
+#define LLCC_CPUSS1      33
+#define LLCC_CAMEXP0     34
+#define LLCC_CPUMTE      35
+#define LLCC_CPUHWT      36
+#define LLCC_MDMCLAD2    37
+#define LLCC_CAMEXP1     38
+#define LLCC_AENPU       45
 
 /**
  * llcc_slice_desc - Cache slice descriptor
@@ -35,6 +49,7 @@
 struct llcc_slice_desc {
 	u32 slice_id;
 	size_t slice_size;
+	atomic_t refcount;
 };
 
 /**
@@ -73,6 +88,8 @@ struct llcc_edac_reg_data {
  * @bitmap: Bit map to track the active slice ids
  * @offsets: Pointer to the bank offsets array
  * @ecc_irq: interrupt for llcc cache error detection and reporting
+ * @llcc_ver: hardware version (20 for V2.0)
+ * @desc: Array pointer of llcc_slice_desc
  */
 struct llcc_drv_data {
 	struct regmap *regmap;
@@ -85,6 +102,9 @@ struct llcc_drv_data {
 	unsigned long *bitmap;
 	u32 *offsets;
 	int ecc_irq;
+	int llcc_ver;
+	bool cap_based_alloc_and_pwr_collapse;
+	struct llcc_slice_desc *desc;
 };
 
 #if IS_ENABLED(CONFIG_QCOM_LLCC)
